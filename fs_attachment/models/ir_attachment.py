@@ -1028,7 +1028,7 @@ class AttachmentFileLikeAdapter:
             or self._is_stored_in_db
         ):
             if self.attachment._is_file_from_a_storage(self.attachment.store_fname):
-                fs, _storage, fname = self.attachment._get_fs_parts()
+                fs, _storage, fname = self.attachment.sudo()._get_fs_parts()
                 filepath = fname
                 filesystem = fs
             elif self.attachment.store_fname:
@@ -1067,7 +1067,7 @@ class AttachmentFileLikeAdapter:
                     _storage,
                     new_filepath,
                 ) = self.attachment._fs_parse_store_fname(new_store_fname)
-                _fs, _storage, old_filepath = self.attachment._get_fs_parts()
+                _fs, _storage, old_filepath = self.attachment.sudo()._get_fs_parts()
             else:
                 new_filepath = self.attachment._full_path(new_store_fname)
                 old_filepath = self.attachment._full_path(self.attachment.store_fname)
