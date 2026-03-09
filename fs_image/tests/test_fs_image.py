@@ -5,10 +5,10 @@ import io
 import os
 import tempfile
 
-from odoo_test_helper import FakeModelLoader
 from PIL import Image
 
 from odoo.exceptions import UserError
+from odoo.orm.model_classes import add_to_registry
 from odoo.tests.common import TransactionCase, users, warmup
 
 from odoo.addons.fs_storage.models.fs_storage import FSStorage
@@ -24,11 +24,20 @@ class TestFsImage(TransactionCase):
         cls.env["ir.config_parameter"].set_param(
             "base.image_autoresize_max_px", "10000x10000"
         )
-        cls.loader = FakeModelLoader(cls.env, cls.__module__)
-        cls.loader.backup_registry()
         from .models import TestImageModel, TestRelatedImageModel
 
-        cls.loader.update_registry((TestImageModel, TestRelatedImageModel))
+        add_to_registry(cls.registry, TestImageModel)
+        add_to_registry(cls.registry, TestRelatedImageModel)
+        cls.registry._setup_models__(
+            cls.env.cr, ["test.image.model", "test.related.image.model"]
+        )
+        cls.registry.init_models(
+            cls.env.cr,
+            ["test.image.model", "test.related.image.model"],
+            {"models_to_check": True},
+        )
+        cls.addClassCleanup(cls.registry.__delitem__, "test.image.model")
+        cls.addClassCleanup(cls.registry.__delitem__, "test.related.image.model")
 
         cls.image_w = cls._create_image(4000, 2000)
         cls.image_h = cls._create_image(2000, 4000)
@@ -56,7 +65,6 @@ class TestFsImage(TransactionCase):
     def tearDownClass(cls):
         if os.path.exists(cls.tmpfile_path):
             os.remove(cls.tmpfile_path)
-        cls.loader.restore_registry()
         return super().tearDownClass()
 
     @classmethod
