@@ -692,6 +692,21 @@ class IrAttachment(models.Model):
     ################################
     # useful methods for migration #
     ################################
+    @api.model
+    def _migrate_batch(self, batch_size=500):
+        """Migrate attachments in batch to avoid exhausting memory"""
+        batch = self.env["ir.attachment"].search(
+            [
+                ("res_model", "=", "helpdesk.ticket"),
+                ("fs_storage_code", "=", False),
+                ("file_size", "!=", 0),
+                ("file_size", "<", 200000000),
+            ],
+            limit=batch_size,
+        )
+        _logger.info("Migrating attachments in batch of %d", len(batch))
+        for attachment in batch:
+            attachment._move_attachment_to_store()
 
     def _move_attachment_to_store(self):
         self.ensure_one()
