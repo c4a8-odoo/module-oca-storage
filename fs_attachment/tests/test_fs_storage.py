@@ -69,6 +69,28 @@ class TestFsStorage(TestFSAttachmentCommon):
 
         self.assertEqual(attachment.fs_storage_code, self.default_backend.code)
 
+    def test_force_model_create_attachment_empty_content(self):
+        """
+        Force 'res.partner' model to temp_backend
+        Use odoofs as default for attachments
+        * Check that only attachments linked to res.partner model are stored
+        in the first FS.
+        * Check that updating this first attachment does not change the storage
+        """
+        self.default_backend.use_as_default_for_attachments = True
+        self.temp_backend.model_xmlids = "base.model_res_partner"
+
+        # 1a. First attachment linked to res.partner model
+        content = b""
+        attachment = self.ir_attachment_model.create(
+            {"name": "test.txt", "raw": content, "res_model": "res.partner"}
+        )
+        self.assertTrue(attachment.store_fname)
+        self.assertFalse(attachment.db_datas)
+        self.assertEqual(attachment.raw, content)
+        self.assertEqual(attachment.mimetype, "text/plain")
+        self.env.flush_all()
+
     def test_force_field_create_attachment(self):
         """
         Force 'base.field_res.partner__name' field to temp_backend

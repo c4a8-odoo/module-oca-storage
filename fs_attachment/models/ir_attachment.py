@@ -697,8 +697,8 @@ class IrAttachment(models.Model):
         self.ensure_one()
         _logger.info("inspecting attachment %s (%d)", self.name, self.id)
         fname = self.store_fname
-        storage = fname.partition("://")[0]
-        if self._is_storage_disabled(storage):
+        storage = fname.partition("://")[0] if fname else None
+        if storage and self._is_storage_disabled(storage):
             fname = False
         if fname:
             # migrating from filesystem filestore
