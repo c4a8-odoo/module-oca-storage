@@ -431,6 +431,24 @@ class TestFSAttachment(TestFSAttachmentCommon):
             }
         )
 
+    def test_create_two_attachments(self):
+        self.temp_backend.use_as_default_for_attachments = True
+        self.ir_attachment_model.create(
+            [
+                {"name": "test2.txt", "raw": b"content"},
+                {"name": "test.txt", "raw": b"content"},
+            ]
+        )
+
+    def test_create_two_attachments_same_name(self):
+        self.temp_backend.use_as_default_for_attachments = True
+        self.ir_attachment_model.create(
+            [
+                {"name": "test.txt", "raw": b"content"},
+                {"name": "test.txt", "raw": b"content"},
+            ]
+        )
+
     def test_update_png_to_svg(self):
         b64_data_png = (
             b"iVBORw0KGgoAAAANSUhEUgAAADMAAAAhCAIAAAD73QTtAAAAA3NCSVQICAjb4U/gAA"
