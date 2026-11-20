@@ -330,3 +330,105 @@ class TestFsStorage(TestFSAttachmentCommon):
         self.temp_backend.directory_path += "/{db_name}"
         self.assertEqual("", self.temp_backend.base_url_for_files)
         self.assertNotIn("{db_name}", self.temp_backend.base_url_for_files)
+
+    def _create_pending_attachment(self, content, **ctx):
+        """Create an attachment as the chatter does for pending uploads"""
+        return self.ir_attachment_model.with_context(**ctx).create(
+            {
+                "name": "test.txt",
+                "raw": content,
+                "res_model": "mail.compose.message",
+                "res_id": 0,
+            }
+        )
+
+    def test_relocate_on_res_model_change_from_filestore(self):
+        """A pending attachment linked afterwards to a model routed to a
+        storage is moved from the odoo filestore to this storage"""
+        self.temp_backend.model_xmlids = "base.model_res_partner"
+        partner = self.env["res.partner"].create({"name": "Test Partner"})
+        content = b"pending attachment"
+        attachment = self._create_pending_attachment(content)
+        self.assertFalse(attachment.fs_storage_code)
+        self.assertTrue(attachment.store_fname)
+        self.assertNotIn("://", attachment.store_fname)
+
+        attachment.write({"res_model": "res.partner", "res_id": partner.id})
+        self.env.flush_all()
+
+        self.assertEqual(attachment.fs_storage_code, self.temp_backend.code)
+        self.assertTrue(attachment.store_fname.startswith("tmp_dir://"))
+        self.assertFalse(attachment.db_datas)
+        self.assertEqual(attachment.raw, content)
+        filename = f"test-{attachment.id}-0.txt"
+        self.assertEqual(os.listdir(self.temp_dir), [filename])
+        with open(os.path.join(self.temp_dir, filename), "rb") as f:
+            self.assertEqual(f.read(), content)
+
+    def test_relocate_on_res_model_change_from_default_storage(self):
+        """A pending attachment stored in the default storage is moved to
+        the storage of the model it is linked to"""
+        self.default_backend.use_as_default_for_attachments = True
+        self.temp_backend.model_xmlids = "base.model_res_partner"
+        partner = self.env["res.partner"].create({"name": "Test Partner"})
+        content = b"pending attachment"
+        attachment = self._create_pending_attachment(content)
+        self.assertEqual(attachment.fs_storage_code, self.default_backend.code)
+
+        attachment.write({"res_model": "res.partner", "res_id": partner.id})
+        self.env.flush_all()
+
+        self.assertEqual(attachment.fs_storage_code, self.temp_backend.code)
+        self.assertEqual(attachment.raw, content)
+        with attachment.open("rb") as f:
+            self.assertEqual(f.read(), content)
+
+    def test_relocate_on_res_model_change_to_filestore(self):
+        """An attachment linked to another model not routed to a storage is
+        moved back to the odoo filestore"""
+        self.temp_backend.model_xmlids = "base.model_res_partner"
+        content = b"partner attachment"
+        attachment = self.ir_attachment_model.create(
+            {"name": "test.txt", "raw": content, "res_model": "res.partner"}
+        )
+        self.assertEqual(attachment.fs_storage_code, self.temp_backend.code)
+
+        attachment.write({"res_model": "res.country"})
+        self.env.flush_all()
+
+        self.assertFalse(attachment.fs_storage_code)
+        self.assertFalse(attachment.fs_filename)
+        self.assertNotIn("://", attachment.store_fname)
+        self.assertEqual(attachment.raw, content)
+
+    def test_no_relocate_without_routing_change(self):
+        self.temp_backend.model_xmlids = "base.model_res_partner"
+        partner = self.env["res.partner"].create({"name": "Test Partner"})
+        attachment = self.ir_attachment_model.create(
+            {"name": "test.txt", "raw": b"content", "res_model": "res.partner"}
+        )
+        store_fname = attachment.store_fname
+        attachment.write({"res_model": "res.partner", "res_id": partner.id})
+        self.assertEqual(attachment.store_fname, store_fname)
+
+    def test_no_relocate_explicit_storage_location(self):
+        """An attachment explicitly stored in a storage is not moved"""
+        self.temp_backend.model_xmlids = "base.model_res_partner"
+        partner = self.env["res.partner"].create({"name": "Test Partner"})
+        attachment = self._create_pending_attachment(
+            b"content", storage_location=self.backend_optimized.code
+        )
+        store_fname = attachment.store_fname
+        self.assertTrue(store_fname.startswith("tmp_opt://"))
+        attachment.write({"res_model": "res.partner", "res_id": partner.id})
+        self.assertEqual(attachment.store_fname, store_fname)
+
+    def test_no_relocate_context_opt_out(self):
+        self.temp_backend.model_xmlids = "base.model_res_partner"
+        partner = self.env["res.partner"].create({"name": "Test Partner"})
+        attachment = self._create_pending_attachment(b"content")
+        store_fname = attachment.store_fname
+        attachment.with_context(fs_attachment_no_relocate=True).write(
+            {"res_model": "res.partner", "res_id": partner.id}
+        )
+        self.assertEqual(attachment.store_fname, store_fname)
