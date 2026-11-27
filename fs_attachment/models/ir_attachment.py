@@ -380,6 +380,9 @@ class IrAttachment(models.Model):
                             "mimetypes at the same time."
                         )
                     )
+        to_relocate = []
+        if self._fs_must_check_relocation(vals):
+            to_relocate = self._fs_get_attachments_to_relocate(vals)
         for rec in self:
             # As when creating a new attachment, we must pass the res_field
             # and res_model into the context hence sadly we must perform 1 call
@@ -392,10 +395,106 @@ class IrAttachment(models.Model):
                 ),
             ).write(vals)
 
+        if to_relocate:
+            self.browse(to_relocate)._fs_relocate()
+
         if "name" in vals:
             self._enforce_meaningful_storage_filename()
 
         return True
+
+    def _fs_must_check_relocation(self, vals):
+        """Return whether the write of ``vals`` may change the storage to use
+
+        The storage is resolved from res_model/res_field (see
+        ``fs.storage.get_default_storage_code_for_attachments``) but only when
+        the content is written. Odoo creates some attachments before knowing
+        the record they belong to (e.g. pending uploads of the chatter are
+        created with res_model 'mail.compose.message' and res_id 0) and links
+        them afterwards by only writing res_model/res_id. Without relocation,
+        their content stays in the storage resolved for the placeholder model.
+        """
+        return (
+            ("res_model" in vals or "res_field" in vals)
+            and "datas" not in vals
+            and "raw" not in vals
+            and not self.env.context.get("storage_location")
+            and not self.env.context.get("fs_attachment_no_relocate")
+            and not self._is_storage_disabled(log=False)
+        )
+
+    def _fs_get_current_location(self):
+        """Return where the content is currently stored: a storage code,
+        'file' (odoo filestore), 'db' or None if there is no content."""
+        self.ensure_one()
+        if self._is_file_from_a_storage(self.store_fname):
+            return self.store_fname.partition("://")[0]
+        if self.store_fname:
+            return "file"
+        if self.db_datas:
+            return "db"
+        return None
+
+    def _fs_get_attachments_to_relocate(self, vals):
+        """Return the ids of the attachments whose content must be moved
+        because the storage resolved from res_model/res_field changes.
+
+        Only attachments stored where the routing of their current
+        res_model/res_field put them are moved: an attachment explicitly
+        stored elsewhere (e.g. with ``storage_location``) is left untouched.
+        """
+        storage_by_key = {}
+
+        def resolve_storage(res_model, res_field):
+            key = (res_model or False, res_field or False)
+            if key not in storage_by_key:
+                storage_by_key[key] = self.with_context(
+                    attachment_res_model=key[0], attachment_res_field=key[1]
+                )._storage()
+            return storage_by_key[key]
+
+        storage_codes = self._get_storage_codes()
+        to_relocate = []
+        for rec in self.sudo():
+            if rec.type != "binary":
+                continue
+            old_storage = resolve_storage(rec.res_model, rec.res_field)
+            new_storage = resolve_storage(
+                vals["res_model"] if "res_model" in vals else rec.res_model,
+                vals["res_field"] if "res_field" in vals else rec.res_field,
+            )
+            if old_storage == new_storage:
+                continue
+            current = rec._fs_get_current_location()
+            # content in db while routed to a storage: kept in db by the
+            # force_db_for_default_attachment_rules
+            if current == old_storage or (
+                current == "db" and old_storage in storage_codes
+            ):
+                to_relocate.append(rec.id)
+        return to_relocate
+
+    def _fs_relocate(self):
+        """Store the content again in the storage resolved from the current
+        res_model/res_field."""
+        for rec in self.sudo():
+            old_fname = rec.store_fname
+            rec = rec.with_context(
+                attachment_res_model=rec.res_model,
+                attachment_res_field=rec.res_field,
+            )
+            storage = rec._storage()
+            _logger.debug(
+                "Relocating attachment %s (%s) to storage %s",
+                rec.id,
+                rec.res_model,
+                storage,
+            )
+            rec._set_attachment_data(lambda attach: attach.raw)
+            if storage == "db" and old_fname:
+                # _set_attachment_data only cleans up the previous file when
+                # the new location is not the database
+                rec._file_delete(old_fname)
 
     @api.model
     def _file_read(self, fname, size=None):
